@@ -53,15 +53,18 @@ Logistic regression placeholder:
 ### Fee Model
 Static fee rates per tier. Users must configure based on exchange documentation.
 
-## Almgren–Chriss Model Demonstration
+## Setup Instructions
 
-The demo script `docs/almgren_chriss_demo.py` visualizes the optimal execution schedule under the Almgren–Chriss framework. It illustrates how different risk aversion (λ) values influence the trade execution trajectory over a normalized time horizon.
+See `docs/setup.md` for VPN configuration and OKX SPOT API access to fetch public market data.
 
-```bash
-python docs/almgren_chriss_demo.py
-```
+## Real-Time Almgren–Chriss Model Integration
 
-Open the generated HTML file (`docs/almgren_chriss_demo.html`) in your browser to explore the interactive chart of execution schedules.
+The dashboard includes a live Almgren–Chriss optimal execution visualization. In the sidebar, adjust:
+- **Risk Aversion (λ)** – trader’s risk aversion parameter  
+- **Execution Time Horizon (T)** – normalized total execution interval  
+- **Time Steps (N)** – discrete slices to plot the execution trajectory  
+
+The chart updates in real time based on current orderbook conditions to show the remaining quantity schedule for optimal execution.
 
 ## Next Steps
 - Integrate regression training pipelines for slippage and maker/taker models.

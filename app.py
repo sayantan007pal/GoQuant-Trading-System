@@ -57,6 +57,18 @@ sidebar = dbc.Card(
                 value="Tier 0",
             ),
         ], className="mb-3"),
+        html.Div([
+            dbc.Label("Risk Aversion (λ):", html_for="input-lambda"),
+            dbc.Input(id="input-lambda", type="number", value=0.001, step=1e-4),
+        ], className="mb-3"),
+        html.Div([
+            dbc.Label("Execution Time Horizon (T):", html_for="input-horizon"),
+            dbc.Input(id="input-horizon", type="number", value=1.0, step=0.1),
+        ], className="mb-3"),
+        html.Div([
+            dbc.Label("Time Steps (N):", html_for="input-steps"),
+            dbc.Input(id="input-steps", type="number", value=20, step=1),
+        ], className="mb-3"),
     ],
     body=True,
     style={"height": "100%", "padding": "1rem"},
@@ -91,20 +103,32 @@ app.layout = dbc.Container(
         # Timer for periodic metric updates (interval in milliseconds)
         # Reduced interval for lower-latency UI updates
         dcc.Interval(id="interval-timer", interval=500, n_intervals=0),
+        # Real-time Almgren–Chriss execution trajectory chart
+        dbc.Row(
+            dbc.Col(
+                dcc.Graph(id="execution-chart", config={'displayModeBar': False}),
+                width=12
+            ),
+            className="mt-4"
+        ),
     ],
     fluid=True,
 )
 
 @app.callback(
-    [dash.dependencies.Output(out_id, "children") for _, out_id in metrics],
+    [dash.dependencies.Output(out_id, "children") for _, out_id in metrics]
+    + [dash.dependencies.Output("execution-chart", "figure")],
     [dash.dependencies.Input("interval-timer", "n_intervals")],
     [
         dash.dependencies.State("input-quantity", "value"),
         dash.dependencies.State("input-volatility", "value"),
         dash.dependencies.State("input-feetier", "value"),
+        dash.dependencies.State("input-lambda", "value"),
+        dash.dependencies.State("input-horizon", "value"),
+        dash.dependencies.State("input-steps", "value"),
     ],
 )
-def update_metrics(n, quantity_usd, volatility, fee_tier):
+def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_horizon, time_steps):
     # Fetch latest orderbook tick
     try:
         data, ts = orderbook_queue.get_nowait()
@@ -145,6 +169,36 @@ def update_metrics(n, quantity_usd, volatility, fee_tier):
     # Internal latency measurement
     latency = timer.tick()
 
+    # Compute real-time Almgren–Chriss execution trajectory
+    X = quantity_usd / mid_price
+    eta = 0.05
+    sigma = volatility
+    lam = risk_aversion
+    T = time_horizon
+    N = int(time_steps)
+    times = np.linspace(0, T, N + 1)
+    if eta > 0 and lam * sigma**2 > 0:
+        kappa = np.sqrt(lam * sigma**2 / eta)
+        trajectory = X * np.sinh(kappa * (T - times)) / np.sinh(kappa * T)
+    else:
+        trajectory = X * (1 - times / T)
+
+    exec_fig = go.Figure(
+        data=[go.Scatter(
+            x=times,
+            y=trajectory,
+            mode="lines+markers",
+            line=dict(color="magenta", width=2),
+        )],
+        layout=go.Layout(
+            title="Optimal Execution Trajectory (Almgren–Chriss)",
+            xaxis=dict(title="Time (t)"),
+            yaxis=dict(title="Remaining Quantity"),
+            margin=dict(l=40, r=20, t=40, b=40),
+            template="plotly_dark",
+        ),
+    )
+
     return [
         f"{slippage:.2f}",
         f"{fees:.2f}",
@@ -152,6 +206,7 @@ def update_metrics(n, quantity_usd, volatility, fee_tier):
         f"{net_cost:.2f}",
         f"{maker_prop:.2%}",
         f"{latency:.1f}",
+        exec_fig,
     ]
 
 if __name__ == '__main__':

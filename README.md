@@ -48,14 +48,8 @@
  ```
 
  ## Documentation
-See `docs/design.md` for architecture and model descriptions, and `docs/debugging.md` for using the interactive debug toolbar in the dashboard.
+See `docs/design.md` for architecture and model descriptions, `docs/debugging.md` for using the interactive debug toolbar, and `docs/setup.md` for initial VPN and OKX API setup instructions.
 
-### Almgren–Chriss Model Demonstration
+### Real-Time Almgren–Chriss Execution Visualization
 
-To explore the optimal execution trajectories under the Almgren–Chriss framework, run:
-
-```bash
-python docs/almgren_chriss_demo.py
-```
-
-This generates `docs/almgren_chriss_demo.html`. Open it in your browser to view an interactive chart demonstrating how different risk aversion parameters shape the execution schedule.
+The dashboard now integrates a live Almgren–Chriss optimal execution model. Adjust the **Risk Aversion (λ)**, **Execution Time Horizon (T)**, and **Time Steps (N)** inputs in the sidebar to visualize the optimal trade schedule update in real time based on current orderbook conditions.
