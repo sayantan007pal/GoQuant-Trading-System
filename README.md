@@ -48,4 +48,14 @@
  ```
 
  ## Documentation
- See `docs/design.md` for architecture, model descriptions, and implementation details.
+See `docs/design.md` for architecture, model descriptions, and implementation details.
+
+### Almgren–Chriss Model Demonstration
+
+To explore the optimal execution trajectories under the Almgren–Chriss framework, run:
+
+```bash
+python docs/almgren_chriss_demo.py
+```
+
+This generates `docs/almgren_chriss_demo.html`. Open it in your browser to view an interactive chart demonstrating how different risk aversion parameters shape the execution schedule.

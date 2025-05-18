@@ -9,6 +9,9 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 
 import numpy as np
+import plotly.graph_objs as go
+from collections import deque
+from datetime import datetime
 
 from websocket_client import run_listener_in_thread, orderbook_queue
 from utils.latency_timer import LatencyTimer
@@ -28,6 +31,11 @@ server = app.server
 
 # Timer for internal latency measurement
 timer = LatencyTimer()
+
+# History for mid-price chart
+MAX_HISTORY = 200
+price_history = deque(maxlen=MAX_HISTORY)
+time_history = deque(maxlen=MAX_HISTORY)
 
 # Sidebar (input parameters)
 sidebar = dbc.Card(

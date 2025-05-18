@@ -53,6 +53,16 @@ Logistic regression placeholder:
 ### Fee Model
 Static fee rates per tier. Users must configure based on exchange documentation.
 
+## Almgren–Chriss Model Demonstration
+
+The demo script `docs/almgren_chriss_demo.py` visualizes the optimal execution schedule under the Almgren–Chriss framework. It illustrates how different risk aversion (λ) values influence the trade execution trajectory over a normalized time horizon.
+
+```bash
+python docs/almgren_chriss_demo.py
+```
+
+Open the generated HTML file (`docs/almgren_chriss_demo.html`) in your browser to explore the interactive chart of execution schedules.
+
 ## Next Steps
 - Integrate regression training pipelines for slippage and maker/taker models.
 - Parameterize fee tier mapping with live exchange data.
