@@ -67,3 +67,7 @@ Open the generated HTML file (`docs/almgren_chriss_demo.html`) in your browser t
 - Integrate regression training pipelines for slippage and maker/taker models.
 - Parameterize fee tier mapping with live exchange data.
 - Extend UI for multiple symbols and advanced settings.
+
+## Debug Toolbar
+
+During development, enable debug mode (`app.run(debug=True)`) to open the interactive Dash developer panel. See `docs/debugging.md` for instructions on using the Errors, Callbacks, and Requests tabs to diagnose issues and monitor callback performance.

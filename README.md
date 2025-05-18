@@ -48,7 +48,7 @@
  ```
 
  ## Documentation
-See `docs/design.md` for architecture, model descriptions, and implementation details.
+See `docs/design.md` for architecture and model descriptions, and `docs/debugging.md` for using the interactive debug toolbar in the dashboard.
 
 ### Almgren–Chriss Model Demonstration
 
