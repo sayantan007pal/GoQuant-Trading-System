@@ -80,7 +80,9 @@ app.layout = dbc.Container(
     [
         html.H2("GoQuant Trade Simulator", className="mt-4 mb-4"),
         dbc.Row([dbc.Col(sidebar, width=3), content]),
-        dcc.Interval(id="interval-timer", interval=1000, n_intervals=0),
+        # Timer for periodic metric updates (interval in milliseconds)
+        # Reduced interval for lower-latency UI updates
+        dcc.Interval(id="interval-timer", interval=500, n_intervals=0),
     ],
     fluid=True,
 )
