@@ -50,6 +50,12 @@
      └── design.md
  ```
 
+## Demo
+<img width="1352" alt="Screenshot 2025-05-19 at 2 15 05 AM" src="https://github.com/user-attachments/assets/aaadf01b-9bbb-46d6-baf0-4f6643a2e892" />
+<img width="1352" alt="Screenshot 2025-05-19 at 2 11 58 AM" src="https://github.com/user-attachments/assets/76a253e1-400f-4724-bfa4-06fb954ed229" />
+<img width="1352" alt="Screenshot 2025-05-19 at 1 27 17 AM" src="https://github.com/user-attachments/assets/63e5d488-b07d-45a3-9eac-72bb8a896a3b" />
+<img width="1352" alt="Screenshot 2025-05-19 at 1 26 20 AM" src="https://github.com/user-attachments/assets/6a473e0c-64f0-4894-9811-0cdac538f82d" />
+
  ## Documentation
 See `docs/design.md` for architecture and model descriptions (including Phase 2 UI enhancements), `docs/debugging.md` for using the interactive debug toolbar, and `docs/setup.md` for initial VPN and OKX API setup instructions.
 
