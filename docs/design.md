@@ -24,7 +24,8 @@ This document outlines the architecture and design decisions for the GoQuant tra
 
 ### Data Flow
 1. `websocket_client.py` connects to L2 orderbook stream and pushes the latest tick into a queue.
-2. Dash `dcc.Interval` triggers a callback in `app.py` to pull from the queue.
+2. Dash Server-Sent Events (`EventSource`) streams ticks via `/stream?symbol=` endpoint.
+   A background `EventSource` callback in `app.py` fires on every new orderbook tick.
 3. On each tick:
    - Compute spread and mid-price from orderbook data.
    - Invoke models:
@@ -59,7 +60,7 @@ See `docs/setup.md` for VPN configuration and OKX SPOT API access to fetch publi
 
 ## Real-Time Almgren–Chriss Model Integration
 
-The dashboard includes a live Almgren–Chriss optimal execution visualization. In the sidebar, adjust:
+The dashboard includes a live Almgren–Chriss optimal execution visualization with dynamic controls. In the sidebar, adjust:
 - **Risk Aversion (λ)** – trader’s risk aversion parameter  
 - **Execution Time Horizon (T)** – normalized total execution interval  
 - **Time Steps (N)** – discrete slices to plot the execution trajectory  
@@ -69,7 +70,13 @@ The chart updates in real time based on current orderbook conditions to show the
 ## Next Steps
 - Integrate regression training pipelines for slippage and maker/taker models.
 - Parameterize fee tier mapping with live exchange data.
-- Extend UI for multiple symbols and advanced settings.
+- **Phase 2:** Dynamic symbol selection, input validation, and keyboard shortcuts.
+  - **Symbol Picker:** Select trading pair (e.g. BTC-USDT) to switch live data feed.
+  - **Validation:** Immediate feedback on invalid λ, T, N, volatility, or quantity inputs.
+  - **Keyboard Shortcuts:**
+    - `p` to pause/resume live updates
+    - `r` to reset all charts/history buffers
+    - `t` to toggle the execution-chart display
 
 ## Debug Toolbar
 

@@ -13,20 +13,21 @@ import plotly.graph_objs as go
 from collections import deque
 from datetime import datetime
 
-from websocket_client import run_listener_in_thread, orderbook_queue
-from flask import Response
+from websocket_client import run_listener_for_symbol, get_orderbook_queue
+from flask import Response, request
 import json
-from dash_extensions import EventSource
+from dash_extensions import EventSource, EventListener
 from utils.latency_timer import LatencyTimer
 from utils.fee_model import calculate_fee, FEE_TIERS
 from models.slippage_model import estimate_slippage
 from models.market_impact_model import almgren_chriss_impact
 from models.maker_taker_model import predict_maker_proportion
 
-# WebSocket endpoint for L2 orderbook (OKX BTC-USDT-SWAP)
-WS_URI = 'wss://ws.gomarket-cpp.goquant.io/ws/l2-orderbook/okx/BTC-USDT-SWAP'
-# Start background listener thread
-run_listener_in_thread(WS_URI)
+# Supported symbols for live subscription
+SYMBOLS = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'LTC-USDT-SWAP', 'XRP-USDT-SWAP']
+DEFAULT_SYMBOL = SYMBOLS[0]
+# Initialize listener for default symbol
+run_listener_for_symbol(DEFAULT_SYMBOL)
 
 # Initialize Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -59,6 +60,14 @@ sidebar = dbc.Card(
                 id="input-feetier",
                 options=[{"label": k, "value": k} for k in sorted(FEE_TIERS.keys())],
                 value="Tier 0",
+            ),
+        ], className="mb-3"),
+        html.Div([
+            dbc.Label("Symbol:", html_for="input-symbol"),
+            dbc.Select(
+                id="input-symbol",
+                options=[{"label": s, "value": s} for s in SYMBOLS],
+                value=DEFAULT_SYMBOL,
             ),
         ], className="mb-3"),
         html.Div([
@@ -104,11 +113,18 @@ app.layout = dbc.Container(
     [
         html.H2("GoQuant Trade Simulator", className="mt-4 mb-4"),
         dbc.Row([dbc.Col(sidebar, width=3), content]),
-        # Server-sent events for push updates and status
-        EventSource(id="sse", url="/stream"),
-        dbc.Row(
-            dbc.Col(html.Div("🟡 Connecting...", id="conn-status"), width=12),
-        ),
+        # Server-sent events for push updates (symbol-specific) and keyboard events
+        EventSource(id="sse", url=f"/stream?symbol={DEFAULT_SYMBOL}"),
+        EventListener(id="key-listener", events=[{"event": "keydown"}]),
+        # Stores for pause state and execution-chart visibility
+        dcc.Store(id="pause-store", data=False),
+        dcc.Store(id="toggle-exec-store", data=True),
+        # Connection status badge
+        dbc.Row(dbc.Col(html.Div("🟡 Connecting...", id="conn-status"), width=12)),
+        # Input validation alert
+        dbc.Row(dbc.Col(dbc.Alert(id="input-alert", color="danger", is_open=False), width=12)),
+        # Hidden div for reset trigger
+        html.Div(id="reset-dummy", style={"display": "none"}),
         # Latency sparkline over rolling window
         dbc.Row(
             dbc.Col(
@@ -153,6 +169,8 @@ app.layout = dbc.Container(
         dash.dependencies.State("input-lambda", "value"),
         dash.dependencies.State("input-horizon", "value"),
         dash.dependencies.State("input-steps", "value"),
+        dash.dependencies.State("pause-store", "data"),
+        dash.dependencies.State("input-alert", "is_open"),
     ],
 )
 def update_metrics(
@@ -163,8 +181,11 @@ def update_metrics(
     risk_aversion,
     time_horizon,
     time_steps,
+    paused,
+    alert_open,
 ):
-    if not message:
+    # Skip update when no message, paused, or inputs invalid
+    if not message or paused or alert_open:
         raise exceptions.PreventUpdate
 
     payload = json.loads(message)
@@ -308,11 +329,16 @@ def update_metrics(
 # SSE endpoint for server-sent events (push updates)
 @server.route('/stream')
 def stream():
+    """Server-Sent Events endpoint for streaming orderbook ticks by symbol."""
+    symbol = request.args.get('symbol', DEFAULT_SYMBOL)
+    queue = get_orderbook_queue(symbol)
+
     def event_stream():
         while True:
-            data, ts = orderbook_queue.get()
+            data, ts = queue.get()
             payload = json.dumps({'data': data, 'timestamp': ts})
             yield f"data:{payload}\n\n"
+
     return Response(event_stream(), mimetype='text/event-stream')
 
 
@@ -328,6 +354,94 @@ def update_conn_status(ready_state, error):
     if ready_state == 1:
         return '🟢 Connected'
     return '🔴 Disconnected'
+
+
+@app.callback(
+    dash.dependencies.Output('sse', 'url'),
+    [dash.dependencies.Input('input-symbol', 'value')]
+)
+def update_stream_url(symbol):
+    """Restart listener for the selected symbol and update the SSE URL."""
+    run_listener_for_symbol(symbol)
+    return f"/stream?symbol={symbol}"
+
+
+@app.callback(
+    [dash.dependencies.Output('input-alert', 'children'),
+     dash.dependencies.Output('input-alert', 'is_open')],
+    [
+        dash.dependencies.Input('input-quantity', 'value'),
+        dash.dependencies.Input('input-volatility', 'value'),
+        dash.dependencies.Input('input-lambda', 'value'),
+        dash.dependencies.Input('input-horizon', 'value'),
+        dash.dependencies.Input('input-steps', 'value'),
+    ],
+)
+def validate_inputs(quantity_usd, volatility, risk_aversion, time_horizon, time_steps):
+    """Validate input parameters and show an alert if any are invalid."""
+    errors = []
+    if quantity_usd is None or quantity_usd <= 0:
+        errors.append("Quantity must be > 0")
+    if volatility is None or volatility < 0:
+        errors.append("Volatility must be ≥ 0")
+    if risk_aversion is None or risk_aversion < 0:
+        errors.append("Risk aversion (λ) must be ≥ 0")
+    if time_horizon is None or time_horizon <= 0:
+        errors.append("Time horizon (T) must be > 0")
+    if time_steps is None or time_steps <= 0 or not float(time_steps).is_integer():
+        errors.append("Time steps (N) must be a positive integer")
+
+    if errors:
+        return ["; ".join(errors), True]
+    return ["", False]
+
+
+@app.callback(
+    dash.dependencies.Output('pause-store', 'data'),
+    dash.dependencies.Input('key-listener', 'event'),
+    dash.dependencies.State('pause-store', 'data'),
+)
+def toggle_pause(event, paused):
+    """Toggle pause state when 'p' is pressed."""
+    if not event:
+        raise exceptions.PreventUpdate
+    if event.get('key', '').lower() == 'p':
+        return not paused
+    return paused
+
+@app.callback(
+    dash.dependencies.Output('toggle-exec-store', 'data'),
+    dash.dependencies.Input('key-listener', 'event'),
+    dash.dependencies.State('toggle-exec-store', 'data'),
+)
+def toggle_exec(event, show):
+    """Toggle execution-chart visibility when 't' is pressed."""
+    if not event:
+        raise exceptions.PreventUpdate
+    if event.get('key', '').lower() == 't':
+        return not show
+    return show
+
+@app.callback(
+    dash.dependencies.Output('execution-chart', 'style'),
+    dash.dependencies.Input('toggle-exec-store', 'data'),
+)
+def toggle_exec_display(show):
+    return {'display': 'block' if show else 'none'}
+
+@app.callback(
+    dash.dependencies.Output('reset-dummy', 'children'),
+    dash.dependencies.Input('key-listener', 'event'),
+)
+def reset_charts(event):
+    """Clear historical buffers when 'r' is pressed."""
+    if not event:
+        raise exceptions.PreventUpdate
+    if event.get('key', '').lower() == 'r':
+        price_history.clear()
+        time_history.clear()
+        latency_history.clear()
+    return ''
 
 if __name__ == '__main__':
     app.run(debug=True)
