@@ -33,22 +33,22 @@ timer = LatencyTimer()
 sidebar = dbc.Card(
     [
         html.H5("Input Parameters", className="card-title"),
-        dbc.FormGroup([
+        html.Div([
             dbc.Label("Quantity (USD equivalent):", html_for="input-quantity"),
             dbc.Input(id="input-quantity", type="number", value=100),
-        ]),
-        dbc.FormGroup([
+        ], className="mb-3"),
+        html.Div([
             dbc.Label("Volatility (σ):", html_for="input-volatility"),
             dbc.Input(id="input-volatility", type="number", value=0.3, step=0.01),
-        ]),
-        dbc.FormGroup([
+        ], className="mb-3"),
+        html.Div([
             dbc.Label("Fee Tier:", html_for="input-feetier"),
             dbc.Select(
                 id="input-feetier",
                 options=[{"label": k, "value": k} for k in sorted(FEE_TIERS.keys())],
                 value="Tier 0",
             ),
-        ]),
+        ], className="mb-3"),
     ],
     body=True,
     style={"height": "100%", "padding": "1rem"},
@@ -145,4 +145,4 @@ def update_metrics(n, quantity_usd, volatility, fee_tier):
     ]
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
