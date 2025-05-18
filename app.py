@@ -5,7 +5,7 @@ import time
 from queue import Empty
 
 import dash
-from dash import dcc, html
+from dash import dcc, html, exceptions
 import dash_bootstrap_components as dbc
 
 import numpy as np
@@ -14,6 +14,9 @@ from collections import deque
 from datetime import datetime
 
 from websocket_client import run_listener_in_thread, orderbook_queue
+from flask import Response
+import json
+from dash_extensions import EventSource
 from utils.latency_timer import LatencyTimer
 from utils.fee_model import calculate_fee, FEE_TIERS
 from models.slippage_model import estimate_slippage
@@ -32,10 +35,11 @@ server = app.server
 # Timer for internal latency measurement
 timer = LatencyTimer()
 
-# History for mid-price chart
+# History for mid-price and latency sparkline (rolling window)
 MAX_HISTORY = 200
 price_history = deque(maxlen=MAX_HISTORY)
 time_history = deque(maxlen=MAX_HISTORY)
+latency_history = deque(maxlen=MAX_HISTORY)
 
 # Sidebar (input parameters)
 sidebar = dbc.Card(
@@ -100,16 +104,34 @@ app.layout = dbc.Container(
     [
         html.H2("GoQuant Trade Simulator", className="mt-4 mb-4"),
         dbc.Row([dbc.Col(sidebar, width=3), content]),
-        # Timer for periodic metric updates (interval in milliseconds)
-        # Reduced interval for lower-latency UI updates
-        dcc.Interval(id="interval-timer", interval=500, n_intervals=0),
+        # Server-sent events for push updates and status
+        EventSource(id="sse", url="/stream"),
+        dbc.Row(
+            dbc.Col(html.Div("🟡 Connecting...", id="conn-status"), width=12),
+        ),
+        # Latency sparkline over rolling window
+        dbc.Row(
+            dbc.Col(
+                dcc.Graph(id="latency-sparkline", config={'displayModeBar': False}),
+                width=12,
+            ),
+            className="mb-4",
+        ),
+        # Real-time mid-price time series and orderbook depth charts
+        dbc.Row([
+            dbc.Col(
+                dcc.Graph(id="price-chart", config={'displayModeBar': False}), width=6
+            ),
+            dbc.Col(
+                dcc.Graph(id="depth-chart", config={'displayModeBar': False}), width=6
+            ),
+        ], className="mt-4"),
         # Real-time Almgren–Chriss execution trajectory chart
         dbc.Row(
             dbc.Col(
-                dcc.Graph(id="execution-chart", config={'displayModeBar': False}),
-                width=12
+                dcc.Graph(id="execution-chart", config={'displayModeBar': False}), width=12
             ),
-            className="mt-4"
+            className="mt-4",
         ),
     ],
     fluid=True,
@@ -117,8 +139,13 @@ app.layout = dbc.Container(
 
 @app.callback(
     [dash.dependencies.Output(out_id, "children") for _, out_id in metrics]
-    + [dash.dependencies.Output("execution-chart", "figure")],
-    [dash.dependencies.Input("interval-timer", "n_intervals")],
+    + [
+        dash.dependencies.Output("price-chart", "figure"),
+        dash.dependencies.Output("depth-chart", "figure"),
+        dash.dependencies.Output("execution-chart", "figure"),
+        dash.dependencies.Output("latency-sparkline", "figure"),
+    ],
+    [dash.dependencies.Input("sse", "message")],
     [
         dash.dependencies.State("input-quantity", "value"),
         dash.dependencies.State("input-volatility", "value"),
@@ -128,22 +155,35 @@ app.layout = dbc.Container(
         dash.dependencies.State("input-steps", "value"),
     ],
 )
-def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_horizon, time_steps):
-    # Fetch latest orderbook tick
-    try:
-        data, ts = orderbook_queue.get_nowait()
-    except Empty:
-        raise dash.exceptions.PreventUpdate
+def update_metrics(
+    message,
+    quantity_usd,
+    volatility,
+    fee_tier,
+    risk_aversion,
+    time_horizon,
+    time_steps,
+):
+    if not message:
+        raise exceptions.PreventUpdate
+
+    payload = json.loads(message)
+    data = payload.get("data", {})
+    ts = payload.get("timestamp")
 
     bids = data.get("bids", [])
     asks = data.get("asks", [])
     if not bids or not asks:
-        raise dash.exceptions.PreventUpdate
+        raise exceptions.PreventUpdate
 
     best_bid = float(bids[0][0])
     best_ask = float(asks[0][0])
     mid_price = 0.5 * (best_bid + best_ask)
     spread = best_ask - best_bid
+
+    # record mid-price history
+    time_history.append(datetime.fromtimestamp(ts))
+    price_history.append(mid_price)
 
     # Slippage estimation
     slippage = estimate_slippage(spread, quantity_usd / mid_price)
@@ -152,13 +192,13 @@ def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_ho
     # Market impact estimation
     impact = almgren_chriss_impact(
         quantity=quantity_usd / mid_price,
-        time_horizon=1.0,
+        time_horizon=time_horizon,
         alpha=1.0,
         beta=1.0,
         gamma=0.05,
         eta=0.05,
         volatility=volatility,
-        risk_aversion=0.001,
+        risk_aversion=risk_aversion,
     )
     net_cost = slippage + fees + impact
 
@@ -168,6 +208,48 @@ def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_ho
 
     # Internal latency measurement
     latency = timer.tick()
+    latency_history.append(latency)
+
+    # Build mid-price line chart
+    price_fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=list(time_history),
+                y=list(price_history),
+                mode="lines",
+                line=dict(color="cyan", width=2),
+            )
+        ],
+        layout=go.Layout(
+            title="Mid-Price Over Time",
+            xaxis=dict(title="Time", type="date", tickformat="%H:%M:%S"),
+            yaxis=dict(title="Mid Price"),
+            margin=dict(l=40, r=20, t=40, b=40),
+            template="plotly_dark",
+        ),
+    )
+
+    # Build depth chart for top 10 levels
+    top_n = 10
+    bid_prices = [float(lvl[0]) for lvl in bids[:top_n]]
+    bid_sizes = [float(lvl[1]) for lvl in bids[:top_n]]
+    ask_prices = [float(lvl[0]) for lvl in asks[:top_n]]
+    ask_sizes = [float(lvl[1]) for lvl in asks[:top_n]]
+    depth_fig = go.Figure()
+    depth_fig.add_trace(
+        go.Bar(x=bid_prices, y=bid_sizes, name="Bids", marker_color="green", opacity=0.6)
+    )
+    depth_fig.add_trace(
+        go.Bar(x=ask_prices, y=ask_sizes, name="Asks", marker_color="red", opacity=0.6)
+    )
+    depth_fig.update_layout(
+        title="Orderbook Depth (Top 10 Levels)",
+        xaxis=dict(title="Price"),
+        yaxis=dict(title="Size"),
+        barmode="overlay",
+        margin=dict(l=40, r=20, t=40, b=40),
+        template="plotly_dark",
+    )
 
     # Compute real-time Almgren–Chriss execution trajectory
     X = quantity_usd / mid_price
@@ -179,23 +261,34 @@ def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_ho
     times = np.linspace(0, T, N + 1)
     if eta > 0 and lam * sigma**2 > 0:
         kappa = np.sqrt(lam * sigma**2 / eta)
-        trajectory = X * np.sinh(kappa * (T - times)) / np.sinh(kappa * T)
+        traj = X * np.sinh(kappa * (T - times)) / np.sinh(kappa * T)
     else:
-        trajectory = X * (1 - times / T)
-
+        traj = X * (1 - times / T)
     exec_fig = go.Figure(
-        data=[go.Scatter(
-            x=times,
-            y=trajectory,
-            mode="lines+markers",
-            line=dict(color="magenta", width=2),
-        )],
+        data=[
+            go.Scatter(x=times, y=traj, mode="lines+markers", line=dict(color="magenta", width=2))
+        ],
         layout=go.Layout(
             title="Optimal Execution Trajectory (Almgren–Chriss)",
             xaxis=dict(title="Time (t)"),
             yaxis=dict(title="Remaining Quantity"),
             margin=dict(l=40, r=20, t=40, b=40),
             template="plotly_dark",
+        ),
+    )
+
+    # Build latency sparkline chart
+    lat_fig = go.Figure(
+        data=[
+            go.Scatter(x=list(time_history), y=list(latency_history), mode="lines", line=dict(color="yellow", width=1))
+        ],
+        layout=go.Layout(
+            title="Latency Over Time (ms)",
+            xaxis=dict(showgrid=False, visible=False),
+            yaxis=dict(title="Latency (ms)", showgrid=False),
+            margin=dict(l=40, r=20, t=40, b=20),
+            template="plotly_dark",
+            height=200,
         ),
     )
 
@@ -206,8 +299,35 @@ def update_metrics(n, quantity_usd, volatility, fee_tier, risk_aversion, time_ho
         f"{net_cost:.2f}",
         f"{maker_prop:.2%}",
         f"{latency:.1f}",
+        price_fig,
+        depth_fig,
         exec_fig,
+        lat_fig,
     ]
+
+# SSE endpoint for server-sent events (push updates)
+@server.route('/stream')
+def stream():
+    def event_stream():
+        while True:
+            data, ts = orderbook_queue.get()
+            payload = json.dumps({'data': data, 'timestamp': ts})
+            yield f"data:{payload}\n\n"
+    return Response(event_stream(), mimetype='text/event-stream')
+
+
+@app.callback(
+    dash.dependencies.Output('conn-status', 'children'),
+    [dash.dependencies.Input('sse', 'readyState'), dash.dependencies.Input('sse', 'error')]
+)
+def update_conn_status(ready_state, error):
+    if error:
+        return f"⚠️ Error: {error}"
+    if ready_state == 0:
+        return '🟡 Connecting...'
+    if ready_state == 1:
+        return '🟢 Connected'
+    return '🔴 Disconnected'
 
 if __name__ == '__main__':
     app.run(debug=True)
